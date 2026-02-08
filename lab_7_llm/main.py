@@ -11,9 +11,15 @@ from typing import Iterable, Sequence
 
 import pandas as pd
 from datasets import load_dataset
+from pandas import DataFrame
+from torch.utils.data import Dataset
 
+from admin_utils.constants import torch
+from core_utils.llm.llm_pipeline import AbstractLLMPipeline
+from core_utils.llm.metrics import Metrics
 from core_utils.llm.raw_data_importer import AbstractRawDataImporter
 from core_utils.llm.raw_data_preprocessor import AbstractRawDataPreprocessor
+from core_utils.llm.task_evaluator import AbstractTaskEvaluator
 from core_utils.llm.time_decorator import report_time
 
 class RawDataImporter(AbstractRawDataImporter):
@@ -48,6 +54,18 @@ class RawDataPreprocessor(AbstractRawDataPreprocessor):
         Returns:
             dict: Dataset key properties
         """
+        source_column = "ru"
+        ru_data = self._raw_data[source_column].dropna()
+        source_lengths = ru_data.str.len()
+        
+        return {
+            'dataset_columns': len(self._raw_data.columns),
+            'dataset_duplicates': int(self._raw_data.duplicated().sum()),
+            'dataset_empty_rows': int(self._raw_data.isna().any(axis=1).sum()),
+            'dataset_number_of_samples': len(self._raw_data),
+            'dataset_sample_max_len': int(source_lengths.max()),
+            'dataset_sample_min_len': int(source_lengths.min()),
+        }
 
     @report_time
     def transform(self) -> None:
