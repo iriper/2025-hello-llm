@@ -55,16 +55,16 @@ class RawDataPreprocessor(AbstractRawDataPreprocessor):
             dict: Dataset key properties
         """
         source_column = "ru"
-        ru_data = self._raw_data[source_column].dropna()
-        source_lengths = ru_data.str.len()
-        
+        ru_data = self._raw_data[source_column].dropna(axis=0)
+        source_lengths = [len(text) for text in ru_data]
+
         return {
             'dataset_columns': len(self._raw_data.columns),
             'dataset_duplicates': int(self._raw_data.duplicated().sum()),
             'dataset_empty_rows': int(self._raw_data.isna().any(axis=1).sum()),
             'dataset_number_of_samples': len(self._raw_data),
-            'dataset_sample_max_len': int(source_lengths.max()),
-            'dataset_sample_min_len': int(source_lengths.min()),
+            'dataset_sample_max_len': int(max(source_lengths)),
+            'dataset_sample_min_len': int(min(source_lengths)),
         }
 
     @report_time
