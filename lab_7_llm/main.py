@@ -13,12 +13,14 @@ import pandas as pd
 from datasets import load_dataset
 from pandas import DataFrame
 from torch.utils.data import Dataset
+from torchinfo import summary
+from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
 
 from admin_utils.constants import torch
 from core_utils.llm.llm_pipeline import AbstractLLMPipeline
 from core_utils.llm.metrics import Metrics
 from core_utils.llm.raw_data_importer import AbstractRawDataImporter
-from core_utils.llm.raw_data_preprocessor import AbstractRawDataPreprocessor
+from core_utils.llm.raw_data_preprocessor import AbstractRawDataPreprocessor, ColumnNames
 from core_utils.llm.task_evaluator import AbstractTaskEvaluator
 from core_utils.llm.time_decorator import report_time
 
@@ -73,6 +75,12 @@ class RawDataPreprocessor(AbstractRawDataPreprocessor):
         """
         Apply preprocessing transformations to the raw dataset.
         """
+        df = df.drop(columns=["de", "en", "fr", "it", "nl", "pl"])
+        df = df.rename(columns={"ru": ColumnNames.SOURCE, "es": ColumnNames.TARGET})
+        df = df.dropna()
+        df = df.drop_duplicates()
+        df = df.reset_index(drop=True)
+        self._data = df
 
 
 class TaskDataset(Dataset):
@@ -87,6 +95,7 @@ class TaskDataset(Dataset):
         Args:
             data (pandas.DataFrame): Original data
         """
+        self._data = data
 
     def __len__(self) -> int:
         """
@@ -95,6 +104,7 @@ class TaskDataset(Dataset):
         Returns:
             int: The number of items in the dataset
         """
+        return len(self._data)
 
     def __getitem__(self, index: int) -> tuple[str, ...]:
         """
@@ -106,6 +116,7 @@ class TaskDataset(Dataset):
         Returns:
             tuple[str, ...]: The item to be received
         """
+        return self._data.iloc[index][ColumnNames.SOURCE], self._data.iloc[index][ColumnNames.TARGET]
 
     @property
     def data(self) -> DataFrame:
@@ -115,6 +126,7 @@ class TaskDataset(Dataset):
         Returns:
             pandas.DataFrame: Preprocessed DataFrame
         """
+        return self._data
 
 
 class LLMPipeline(AbstractLLMPipeline):
@@ -135,6 +147,11 @@ class LLMPipeline(AbstractLLMPipeline):
             batch_size (int): The size of the batch inside DataLoader
             device (str): The device for inference
         """
+        super().__init__(model_name, dataset, max_length, batch_size, device)
+        self._tokenizer = AutoTokenizer.from_pretrained(model_name)
+        self._model = AutoModelForSeq2SeqLM.from_pretrained(model_name)
+        self._model.to(self._device)
+        self._model.eval()
 
     def analyze_model(self) -> dict:
         """
@@ -143,6 +160,16 @@ class LLMPipeline(AbstractLLMPipeline):
         Returns:
             dict: Properties of a model
         """
+        config = self._model.config
+        return {
+            "input_shape": [self._batch_size, self._max_length],
+            "embedding_size": config.d_model,
+            "output_shape": [self._batch_size, self._max_length, config.vocab_size],
+            "num_trainable_params": sum(paramm.numel() for paramm in self._model.parameters() if paramm.requires_grad),
+            "vocab_size": config.vocab_size,
+            "size": sum(paramm.numel() for paramm in self._model.parameters()),
+            "max_context_length": getattr(config, 'max_length', self._max_length)
+        }
 
     @report_time
     def infer_sample(self, sample: tuple[str, ...]) -> str | None:
@@ -155,6 +182,24 @@ class LLMPipeline(AbstractLLMPipeline):
         Returns:
             str | None: A prediction
         """
+        if self._model is None:
+            return None
+        source_text = sample[0]
+        inputs = self._tokenizer(
+            source_text, 
+            return_tensors="pt", 
+            padding=True, 
+            truncation=True, 
+            max_length=self._max_length
+        ).to(self._device)
+        
+        outputs = self._model.generate(
+            **inputs, 
+            max_new_tokens=self._max_length, 
+            do_sample=False,
+            num_beams=5
+        )
+        return self._tokenizer.decode(outputs[0], skip_special_tokens=True)
 
     @report_time
     def infer_dataset(self) -> pd.DataFrame:
