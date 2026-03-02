@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import Callable, Iterable, Sequence, cast
 from unittest import result
 
-import evaluate
 import pandas as pd
 import torch
 from datasets import load_dataset
